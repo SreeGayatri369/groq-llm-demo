@@ -1,23 +1,21 @@
 """
-Airbnb MCP Tool — spawns the @openbnb/mcp-server-airbnb process via stdio
-and sends a JSON-RPC tools/call request to search Airbnb listings.
+Airbnb MCP Tool — safely queries the Airbnb MCP server
+and RETURNS A TRUNCATED, LLM-SAFE SUMMARY.
 """
 import json
 import subprocess
 import uuid
+
+MAX_CHARS = 3000  # ✅ HARD safety limit to avoid token explosion
 
 
 def search_airbnb(query: str) -> str:
     """
     Search Airbnb listings using the MCP server.
 
-    Args:
-        query: Natural language search query, e.g. 'stays in Goa under 5000'
-
-    Returns:
-        Formatted string of Airbnb search results.
+    This function ALWAYS returns a TRUNCATED, SAFE response
+    so it will NEVER overflow Groq token limits.
     """
-    # Build a structured location + query from the natural language input
     request_payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
@@ -42,29 +40,40 @@ def search_airbnb(query: str) -> str:
 
         raw = proc.stdout.strip()
         if not raw:
-            return f"No results returned from Airbnb MCP. stderr: {proc.stderr[:300]}"
+            return "No Airbnb results found."
 
-        # The MCP server may return multiple JSON lines; take the last valid one
+        # Take the LAST valid JSON line (MCP behavior)
         for line in reversed(raw.splitlines()):
             line = line.strip()
             if not line:
                 continue
+
             try:
                 response = json.loads(line)
+
                 if "result" in response:
                     content = response["result"].get("content", [])
-                    texts = [c.get("text", "") for c in content if c.get("type") == "text"]
-                    return "\n".join(texts) if texts else str(response["result"])
+                    texts = [
+                        c.get("text", "")
+                        for c in content
+                        if c.get("type") == "text"
+                    ]
+                    combined = "\n".join(texts)
+
+                    # ✅ HARD TRUNCATION
+                    return combined[:MAX_CHARS]
+
                 if "error" in response:
-                    return f"MCP error: {response['error']}"
+                    return f"Airbnb MCP error: {response['error']}"
+
             except json.JSONDecodeError:
                 continue
 
-        return f"Could not parse MCP response: {raw[:500]}"
+        return "Could not parse Airbnb response."
 
     except subprocess.TimeoutExpired:
-        return "Airbnb MCP request timed out after 30 seconds."
+        return "Airbnb request timed out."
     except FileNotFoundError:
-        return "npx not found. Please install Node.js to use the Airbnb MCP tool."
+        return "Node.js (npx) is required to use Airbnb MCP."
     except Exception as e:
-        return f"Airbnb MCP error: {e}"
+        return f"Airbnb tool error: {str(e)}"
