@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 @tool
 def airbnb_tool(query: str) -> str:
-    """Search Airbnb listings. Use for queries about accommodation, stays, rentals, Airbnb."""
+    """Search Airbnb vacation rentals, apartments, homes, and stays. Use ONLY for Airbnb-specific queries or when user asks about vacation rentals, short-term stays, apartments, or accommodation bookings. Examples: 'Find Airbnb in Goa', 'vacation rentals in Mumbai', 'apartments to rent in Bangalore'."""
     logger.info("Tool called: airbnb | query: %s", query)
     return search_airbnb(query)
 
@@ -42,7 +42,7 @@ def weather_tool(location: str) -> str:
 
 @tool
 def web_search_tool(query: str) -> str:
-    """Search the web for general information, news, facts, or anything not covered by other tools."""
+    """Search the web for general information, news, facts, hotels, restaurants, tourist attractions, or anything not related to Airbnb vacation rentals or weather. Use for queries about hotels, top places, general recommendations."""
     logger.info("Tool called: web_search | query: %s", query)
     return web_search(query)
 
