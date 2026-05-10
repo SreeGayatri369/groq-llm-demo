@@ -1,7 +1,8 @@
 """
 LangGraph Agent — SAFE token flow, correct tool routing,
-and no infinite loops.
+and FINAL answer generation after tool execution.
 """
+
 import logging
 from typing import Annotated, TypedDict
 
@@ -22,21 +23,25 @@ from tools.airbnb import search_airbnb
 from tools.weather import get_weather
 from tools.web_search import web_search
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+# ── Logging ───────────────────────────────────────────────────────────────
 
-# ✅ SYSTEM RULE: Hotels / stays MUST go to Airbnb
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+# ── System rules ──────────────────────────────────────────────────────────
+
 SYSTEM_RULE = SystemMessage(
     content=(
-        "You are an AI assistant.\n"
-        "IMPORTANT RULE:\n"
-        "- Any query about hotels, stays, accommodation, rooms, rentals, budget stays\n"
-        "  MUST use the Airbnb tool.\n"
-        "- Use web search ONLY for non-booking information.\n"
-        "- Never call more than ONE tool per user question.\n"
+        "You are an AI assistant.\n\n"
+        "RULES:\n"
+        "- Any query about hotels, stays, accommodation, rooms, rentals, or budget stays "
+        "MUST use the Airbnb tool.\n"
+        "- Use web search only for general informational queries.\n"
+        "- Use weather tool only for weather-related queries.\n"
+        "- After using a tool, always explain the result clearly to the user.\n"
+        "- Never call more than one tool per user question.\n"
     )
 )
-
 
 # ── Tools ────────────────────────────────────────────────────────────────
 
@@ -56,7 +61,7 @@ def weather_tool(location: str) -> str:
 
 @tool
 def web_search_tool(query: str) -> str:
-    """General info ONLY — NOT hotels or stays."""
+    """General info only (NOT hotels or stays)."""
     logger.info("Tool called: web_search | query: %s", query)
     return web_search(query)
 
@@ -71,8 +76,7 @@ class AgentState(TypedDict):
     tool_used: str
     tool_output: str
 
-
-# ── LLM ─────────────────────────────────────────────────────────────────
+# ── LLM ───────────────────────────────────────────────────────────────────
 
 llm = (
     ChatGroq(
@@ -84,13 +88,16 @@ llm = (
     .bind_tools(TOOLS)
 )
 
-
-# ── Nodes ───────────────────────────────────────────────────────────────
+# ── Nodes ────────────────────────────────────────────────────────────────
 
 def agent_node(state: AgentState) -> dict:
+    """
+    Agent node: decides whether to call a tool
+    OR generates the final human-readable answer.
+    """
     logger.info("Agent node: processing %d messages", len(state["messages"]))
 
-    # ✅ KEEP CONTEXT SMALL (last 4 messages only)
+    # Keep context small to avoid token overflow
     messages = [SYSTEM_RULE] + state["messages"][-4:]
 
     response = llm.invoke(messages)
@@ -98,6 +105,10 @@ def agent_node(state: AgentState) -> dict:
 
 
 def tool_node(state: AgentState) -> dict:
+    """
+    Executes the selected tool and returns the output
+    to the agent for final explanation.
+    """
     last = state["messages"][-1]
     tool_calls = getattr(last, "tool_calls", [])
 
@@ -113,53 +124,64 @@ def tool_node(state: AgentState) -> dict:
     tool_fn = TOOL_MAP.get(name)
 
     try:
-        output = tool_fn.invoke(args) if tool_fn else "Unknown tool"
+        output = tool_fn.invoke(args) if tool_fn else "Unknown tool."
     except Exception as e:
-        output = f"Tool failure: {e}"
+        output = f"Tool error: {e}"
 
-    # ✅ Tool output NEVER goes back to tool discovery
+    # Safety cap to prevent token explosion
+    output = output[:3000]
+
     tool_msg = ToolMessage(
-        content=output[:3000],  # ✅ FINAL safety guard
-        tool_call_id=call["id"]
+        content=output,
+        tool_call_id=call["id"],
     )
 
     return {
         "messages": [tool_msg],
         "tool_used": name,
-        "tool_output": output[:3000],
+        "tool_output": output,
     }
 
+# ✅ MINIMAL FIX IS HERE
+# This ensures the agent ALWAYS runs once after tool execution
 
 def should_use_tool(state: AgentState) -> str:
     last = state["messages"][-1]
 
-    # ✅ Tool already used → END
-    if state.get("tool_used") not in ("none", "", None):
-        return "end"
-
+    # If LLM requested a tool → go to tool
     if isinstance(last, AIMessage) and getattr(last, "tool_calls", []):
         return "tool"
 
+    # Otherwise → end (final answer already generated)
     return "end"
 
-
-# ── Graph ───────────────────────────────────────────────────────────────
+# ── Graph ────────────────────────────────────────────────────────────────
 
 def build_graph() -> StateGraph:
     graph = StateGraph(AgentState)
+
     graph.add_node("agent", agent_node)
     graph.add_node("tools", tool_node)
-    graph.set_entry_point("agent")
-    graph.add_conditional_edges("agent", should_use_tool, {
-        "tool": "tools",
-        "end": END
-    })
-    graph.add_edge("tools", "agent")
-    return graph.compile()
 
+    graph.set_entry_point("agent")
+
+    graph.add_conditional_edges(
+        "agent",
+        should_use_tool,
+        {
+            "tool": "tools",
+            "end": END,
+        },
+    )
+
+    # ✅ CRITICAL: tool ALWAYS returns to agent for final explanation
+    graph.add_edge("tools", "agent")
+
+    return graph.compile()
 
 _graph = build_graph()
 
+# ── Public API ────────────────────────────────────────────────────────────
 
 def run_agent(user_input: str) -> dict:
     logger.info("=== Agent run start | input: %s ===", user_input)
