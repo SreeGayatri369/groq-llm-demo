@@ -2,7 +2,7 @@ import httpx
 from groq import Groq
 from config import GROQ_API_KEY
 
-MODEL = "llama3-8b-8192"
+MODEL = "llama-3.1-8b-instant"
 
 
 class GroqLLM:
