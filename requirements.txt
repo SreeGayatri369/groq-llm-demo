@@ -1,2 +1,9 @@
 groq
 python-dotenv
+fastapi
+uvicorn
+httpx
+requests
+langchain-groq
+langchain-core
+langgraph

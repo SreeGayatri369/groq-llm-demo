@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Groq AI Agent</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0f0f17; }
+  .chat-box { height: calc(100vh - 220px); }
+  .bubble-user { background: #7c6aff22; border: 1px solid #7c6aff44; }
+  .bubble-ai   { background: #1a1a2e; border: 1px solid #ffffff12; }
+  .tool-badge  { font-size: 11px; padding: 2px 10px; border-radius: 20px; font-weight: 600; letter-spacing: .4px; }
+  .tool-airbnb { background:#ff585822; color:#ff5858; border:1px solid #ff585844; }
+  .tool-weather{ background:#38bdf822; color:#38bdf8; border:1px solid #38bdf844; }
+  .tool-web    { background:#34d39922; color:#34d399; border:1px solid #34d39944; }
+  .tool-none   { background:#ffffff11; color:#9090b0; border:1px solid #ffffff22; }
+  .spinner { border:3px solid #ffffff18; border-top-color:#7c6aff; border-radius:50%; width:20px; height:20px; animation:spin .7s linear infinite; display:inline-block; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  pre { white-space: pre-wrap; word-break: break-word; }
+</style>
+</head>
+<body class="text-white font-sans">
+
+<div class="max-w-3xl mx-auto px-4 py-6 flex flex-col h-screen">
+
+  <!-- Header -->
+  <div class="mb-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight" style="font-family:system-ui">
+        🤖 Groq <span style="color:#7c6aff">AI Agent</span>
+      </h1>
+      <p class="text-sm mt-1" style="color:#6060a0">Powered by LangGraph · Tools: Airbnb · Weather · Web Search</p>
+    </div>
+    <div class="flex gap-2 text-xs">
+      <span class="tool-badge tool-airbnb">🏠 Airbnb</span>
+      <span class="tool-badge tool-weather">🌤 Weather</span>
+      <span class="tool-badge tool-web">🔍 Web</span>
+    </div>
+  </div>
+
+  <!-- Chat messages -->
+  <div id="chat" class="chat-box overflow-y-auto flex flex-col gap-4 pr-1 mb-4">
+    <div class="bubble-ai rounded-2xl px-5 py-4 text-sm" style="color:#9090b0">
+      👋 Hi! Ask me anything — I can search <strong style="color:#ff5858">Airbnb</strong> listings,
+      check <strong style="color:#38bdf8">weather</strong>, or <strong style="color:#34d399">search the web</strong>.
+      <br><br>
+      Try: <em>"Find Airbnb stays in Goa under ₹5000"</em> or <em>"What's the weather in Mumbai?"</em>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="flex gap-3 items-end">
+    <textarea
+      id="input"
+      rows="2"
+      placeholder="Ask anything..."
+      class="flex-1 rounded-xl px-4 py-3 text-sm resize-none outline-none"
+      style="background:#1a1a2e; border:1px solid #ffffff18; color:#f0f0ff;"
+      onkeydown="handleKey(event)"
+    ></textarea>
+    <button
+      id="send-btn"
+      onclick="sendMessage()"
+      class="rounded-xl px-5 py-3 text-sm font-semibold transition-all"
+      style="background:linear-gradient(135deg,#7c6aff,#5b4fcf); color:white; min-width:80px;"
+    >Send</button>
+  </div>
+</div>
+
+<script>
+  const chat = document.getElementById('chat');
+  const input = document.getElementById('input');
+  const sendBtn = document.getElementById('send-btn');
+
+  const TOOL_LABELS = {
+    airbnb_tool:     { label: '🏠 Airbnb MCP',  cls: 'tool-airbnb' },
+    weather_tool:    { label: '🌤 Weather',      cls: 'tool-weather' },
+    web_search_tool: { label: '🔍 Web Search',   cls: 'tool-web' },
+    none:            { label: '🧠 LLM only',     cls: 'tool-none' },
+  };
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  }
+
+  function appendBubble(html, side) {
+    const div = document.createElement('div');
+    div.className = (side === 'user' ? 'bubble-user' : 'bubble-ai') + ' rounded-2xl px-5 py-4 text-sm';
+    div.innerHTML = html;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+
+  async function sendMessage() {
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    input.value = '';
+    sendBtn.disabled = true;
+
+    appendBubble(`<span style="color:#a78bfa;font-weight:600">You</span><br>${escHtml(msg)}`, 'user');
+
+    const loadingDiv = appendBubble(
+      `<span style="color:#6060a0">Thinking</span> <span class="spinner"></span>`,
+      'ai'
+    );
+
+    try {
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg }),
+      });
+      const data = await res.json();
+
+      const toolInfo = TOOL_LABELS[data.tool_used] || TOOL_LABELS['none'];
+      const toolBadge = `<span class="tool-badge ${toolInfo.cls}">${toolInfo.label}</span>`;
+
+      let toolSection = '';
+      if (data.tool_output && data.tool_used !== 'none') {
+        toolSection = `
+          <details class="mt-3" style="border-top:1px solid #ffffff10; padding-top:10px;">
+            <summary style="cursor:pointer; color:#6060a0; font-size:11px; user-select:none;">
+              ▶ Tool output
+            </summary>
+            <pre class="mt-2 text-xs rounded-lg p-3" style="background:#0a0a0f; color:#9090b0; max-height:200px; overflow-y:auto;">${escHtml(data.tool_output)}</pre>
+          </details>`;
+      }
+
+      loadingDiv.innerHTML = `
+        <div class="flex items-center gap-2 mb-2">
+          <span style="color:#7c6aff; font-weight:600; font-size:12px;">Agent</span>
+          ${toolBadge}
+        </div>
+        <div style="color:#e0e0f0; line-height:1.7;">${formatAnswer(data.answer)}</div>
+        ${toolSection}
+      `;
+    } catch (err) {
+      loadingDiv.innerHTML = `<span style="color:#f87171">Error: ${escHtml(String(err))}</span>`;
+    }
+
+    sendBtn.disabled = false;
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function formatAnswer(text) {
+    // Convert markdown-ish bold and newlines
+    return escHtml(text)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n/g, '<br>');
+  }
+</script>
+</body>
+</html>
